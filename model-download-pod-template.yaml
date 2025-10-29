@@ -1,0 +1,156 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: download-model-pod-template
+  annotations:
+    openshift.io/display-name: "Hugging Face Model Downloader"
+    description: "A template to create a RWX PVC and a one-time Pod to download a Hugging Face model into it."
+    tags: "ml,ai,python,huggingface,model-download,pvc"
+
+parameters:
+  - name: NAME
+    displayName: Pod Name
+    description: "The unique name for the model download Pod."
+    generate: expression
+    from: "download-model-[a-z0-9]{2}"
+
+  # --- PVC Parameters ---
+  - name: PVC_NAME
+    displayName: PVC Name
+    description: "The name of the PersistentVolumeClaim to create and use."
+    value: model-pvc
+    required: true
+  - name: PVC_SIZE
+    displayName: "PVC Storage Size"
+    description: "The size of the PersistentVolumeClaim (e.g., 100Gi)."
+    value: "100Gi"
+    required: true
+  - name: PVC_ACCESS_MODE
+    displayName: "PVC Access Mode"
+    description: "The access mode for the PVC. 'ReadWriteMany' requires a compatible StorageClass."
+    value: "ReadWriteMany"
+    required: true
+  - name: STORAGE_CLASS_NAME
+    displayName: "Storage Class Name"
+    description: "The name of the StorageClass for the PVC. (e.g., 'ocs-storagecluster-cephfs', 'nfs-client'). Leave blank to use the cluster default."
+    value: "ocs-storagecluster-cephfs"
+
+  # --- Model Parameters ---
+  - name: MODEL
+    displayName: Model Repository ID
+    description: "The Hugging Face repository ID to download (e.g., RedHatAI/Qwen3-32B-FP8-dynamic)."
+    value: RedHatAI/Qwen3-32B-FP8-dynamic
+    required: true
+  - name: HUGGING_FACE_HUB_TOKEN
+    displayName: Hugging Face Token 
+    value: ''
+    required: true
+
+  # --- Init Container Resources ---
+  - name: INIT_REQUESTS_MEMORY
+    displayName: "Init Container Memory Request"
+    value: "64Mi"
+  - name: INIT_REQUESTS_CPU
+    displayName: "Init Container CPU Request"
+    value: "250m"
+  - name: INIT_LIMITS_MEMORY
+    displayName: "Init Container Memory Limit"
+    value: "128Mi"
+  - name: INIT_LIMITS_CPU
+    displayName: "Init Container CPU Limit"
+    value: "500m"
+
+  # --- Main Container Resources ---
+  - name: CONTAINER_REQUESTS_MEMORY
+    displayName: "Downloader Container Memory Request"
+    value: "32Gi"
+  - name: CONTAINER_REQUESTS_CPU
+    displayName: "Downloader Container CPU Request"
+    value: "1"
+  - name: CONTAINER_LIMITS_MEMORY
+    displayName: "Downloader Container Memory Limit"
+    value: "128Gi"
+  - name: CONTAINER_LIMITS_CPU
+    displayName: "Downloader Container CPU Limit"
+    value: "4"
+
+objects:
+  # --- 1. The PersistentVolumeClaim ---
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ${PVC_NAME}
+    spec:
+      accessModes:
+        - ${PVC_ACCESS_MODE}
+      resources:
+        requests:
+          storage: ${PVC_SIZE}
+      storageClassName: ${STORAGE_CLASS_NAME}
+
+  # --- 2. The Pod that uses the PVC ---
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: ${NAME}
+    spec:
+      volumes:
+        - name: model-volume
+          persistentVolumeClaim:
+            claimName: ${PVC_NAME}
+      restartPolicy: Never
+      initContainers:
+        - name: fix-volume-permissions
+          image: quay.io/quay/busybox:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: true
+          resources:
+            requests:
+              memory: "${INIT_REQUESTS_MEMORY}"
+              cpu: "${INIT_REQUESTS_CPU}"
+            limits:
+              memory: "${INIT_LIMITS_MEMORY}"
+              cpu: "${INIT_LIMITS_CPU}"
+          command: ["sh"]
+          args: ["-c", "chown -R 1001:1001 /mnt/models"]
+          volumeMounts:
+            - mountPath: "/mnt/models/"
+              name: model-volume
+      containers:
+        - name: download-model
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: true
+          resources:
+            requests:
+              memory: "${CONTAINER_REQUESTS_MEMORY}"
+              cpu: "${CONTAINER_REQUESTS_CPU}"
+            limits:
+              memory: "${CONTAINER_LIMITS_MEMORY}"
+              cpu: "${CONTAINER_LIMITS_CPU}"
+          command: ["sh"]
+          args:
+            - "-c"
+            - |
+              pip install --upgrade pip && pip install --upgrade huggingface_hub
+              python3 -c "
+              from huggingface_hub import snapshot_download
+              snapshot_download(
+                  repo_id='${MODEL}',
+                  local_dir='/mnt/models/hf/instruction_tuned',
+                  local_dir_use_symlinks=False,
+                  token='${HUGGING_FACE_HUB_TOKEN}'
+              )" && \
+              echo "✅ --- Model download complete. Files are in /mnt/models ---"
+          volumeMounts:
+            - mountPath: "/mnt/models/"
+              name: model-volume
+          env:
+            - name: TRANSFORMERS_CACHE
+              value: /tmp
+            - name: MODEL
+              value: ${MODEL}
+            - name: HUGGING_FACE_HUB_TOKEN
+              value: ${HUGGING_FACE_HUB_TOKEN}

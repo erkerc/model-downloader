@@ -1,0 +1,70 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: view-model-pvc
+  annotations:
+    openshift.io/display-name: "Model PVC Inspector Deployment"
+    description: "Deploys a simple pod (using a Deployment) that mounts an existing PVC to allow for shell access and inspection."
+    tags: "debug,storage,pvc"
+
+parameters:
+  - name: DEPLOYMENT_NAME
+    displayName: Deployment Name
+    description: "The name of the Deployment for the inspector pod."
+    value: model-pvc-inspector
+    required: true
+
+  - name: PVC_NAME
+    displayName: Existing PVC Name
+    description: "The name of the PersistentVolumeClaim to attach to (e.g., 'model-pvc')."
+    value: model-pvc
+    required: true
+
+  - name: MOUNT_PATH
+    displayName: Mount Path
+    description: "The path inside the container where the PVC will be mounted."
+    value: /mnt/models
+    required: true
+
+objects:
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: ${DEPLOYMENT_NAME}
+      labels:
+        app: ${DEPLOYMENT_NAME}
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: ${DEPLOYMENT_NAME}
+      template:
+        metadata:
+          labels:
+            app: ${DEPLOYMENT_NAME}
+        spec:
+          # Use the same fsGroup as the downloader pod to ensure
+          # this pod has permission to read the files.
+          securityContext:
+            fsGroup: 1001
+          volumes:
+            - name: storage-volume
+              persistentVolumeClaim:
+                claimName: ${PVC_NAME}
+          containers:
+            - name: inspector-pod
+              # Using a minimal UBI image is efficient
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              imagePullPolicy: IfNotPresent
+              # This command keeps the pod running indefinitely
+              command: ["sh", "-c", "sleep infinity"]
+              volumeMounts:
+                - mountPath: ${MOUNT_PATH}
+                  name: storage-volume
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "200m"
