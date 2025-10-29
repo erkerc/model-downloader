@@ -1,0 +1,36 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-upstream-runtime
+  namespace: redhat-ods-applications
+  annotations:
+    openshift.io/display-name: Upstream vLLM (Latest)
+    opendatahub.io/apiProtocol: REST
+spec:
+  supportedModelFormats:
+    - name: vllm
+      version: "1"
+      autoSelect: true
+  protocolVersions:
+    - v2
+    - openai
+  containers:
+    - name: kserve-container
+      image: vllm/vllm-openai:latest
+      args:
+        - --port=8080
+        - --model=/mnt/models
+        - --served-model-name={{.Name}}
+      ports:
+        - containerPort: 8080
+          protocol: TCP
+      env:
+        - name: MODEL_PATH
+          value: /mnt/models
+      resources:
+        requests:
+          cpu: "1"
+          memory: 4Gi
+        limits:
+          cpu: "4"
+          memory: 16Gi
