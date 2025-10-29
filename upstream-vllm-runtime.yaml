@@ -1,10 +1,10 @@
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: vllm-upstream-runtime
+  name: vllm-nightly-runtime
   namespace: redhat-ods-applications
   annotations:
-    openshift.io/display-name: Upstream vLLM (Latest)
+    openshift.io/display-name: Upstream vLLM (nightly)
     opendatahub.io/apiProtocol: REST
 spec:
   supportedModelFormats:
@@ -16,7 +16,7 @@ spec:
     - openai
   containers:
     - name: kserve-container
-      image: vllm/vllm-openai:latest
+      image: vllm/vllm-openai:nightly
       args:
         - --port=8080
         - --model=/mnt/models
